@@ -1,0 +1,25 @@
+{
+  "name": "rhtp-platform-backend",
+  "version": "0.1.0",
+  "description": "Rural Health Transformation Program — Decision Support Platform API",
+  "main": "server.js",
+  "scripts": {
+    "dev":   "nodemon server.js",
+    "start": "node server.js",
+    "db:migrate": "prisma migrate dev",
+    "db:seed":    "node ../db/seeds/index.js",
+    "db:studio":  "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "cors":           "^2.8.5",
+    "dotenv":         "^16.4.5",
+    "express":        "^4.19.2",
+    "helmet":         "^7.1.0",
+    "morgan":         "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0",
+    "prisma":  "^5.14.0"
+  }
+}

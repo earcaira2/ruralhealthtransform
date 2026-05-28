@@ -1,0 +1,374 @@
+// RHTP Decision Support Platform — Database Schema
+// Rural Health Transformation Program · A&M Public Sector Services
+// Layer 1: Reference (state-agnostic)
+// Layer 2: Montana Implementation Data
+// Layer 3: Scenario Engine
+// Layer 4: Optimization Outputs
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ══════════════════════════════════════════════════════════════
+// LAYER 1 — REFERENCE (state-agnostic, reusable across states)
+// ══════════════════════════════════════════════════════════════
+
+model State {
+  id           String     @id @default(cuid())
+  fips         String     @unique  // e.g. "30" for Montana
+  name         String
+  abbreviation String     @unique
+  counties     County[]
+  facilities   Facility[]
+  createdAt    DateTime   @default(now())
+}
+
+model County {
+  id         String     @id @default(cuid())
+  fips       String     @unique  // 5-digit FIPS
+  name       String
+  stateId    String
+  state      State      @relation(fields: [stateId], references: [id])
+  population Int?
+  areasqmi   Float?
+  // Health outcomes (CMS PLACES)
+  outcomes   HealthOutcome[]
+  // Demographics
+  demographics CountyDemographic[]
+  // Drive times from this county to facilities
+  driveTimes DriveTime[]
+  facilities Facility[]
+  createdAt  DateTime   @default(now())
+}
+
+model ServiceLine {
+  id           String              @id @default(cuid())
+  code         String              @unique  // e.g. "ED", "SURG", "OB"
+  name         String              // e.g. "Emergency Department"
+  category     String              // e.g. "Acute", "Outpatient", "Behavioral"
+  canTelehealth Boolean            @default(false)
+  facilityServices FacilityService[]
+  pricingRecords   PricingRecord[]
+  costCenters      CostCenter[]
+  createdAt    DateTime            @default(now())
+}
+
+model PayerType {
+  id        String      @id @default(cuid())
+  code      String      @unique  // MEDICARE, MEDICAID, COMMERCIAL, UNINSURED
+  name      String
+  mixRecords PayerMix[]
+  createdAt  DateTime   @default(now())
+}
+
+// ══════════════════════════════════════════════════════════════
+// LAYER 2 — MONTANA IMPLEMENTATION DATA
+// ══════════════════════════════════════════════════════════════
+
+model Facility {
+  id              String    @id @default(cuid())
+  cms_id          String?   @unique  // CMS Certification Number
+  name            String
+  type            String    // CAH, Hospital, FQHC, RHC, etc.
+  is_cah          Boolean   @default(false)
+  is_rhtp         Boolean   @default(false)
+  countyId        String
+  county          County    @relation(fields: [countyId], references: [id])
+  stateId         String
+  state           State     @relation(fields: [stateId], references: [id])
+  latitude        Float?
+  longitude       Float?
+  address         String?
+  beds            Int?
+  telehealth      Boolean   @default(false)
+  status          String    @default("active")  // active, closed, proposed
+  // Relations
+  services        FacilityService[]
+  financials      FacilityFinancial[]
+  payerMix        PayerMix[]
+  pricingRecords  PricingRecord[]
+  costCenters     CostCenter[]
+  flowsFrom       PatientFlow[]  @relation("FlowOrigin")
+  flowsTo         PatientFlow[]  @relation("FlowDestination")
+  driveTimesFrom  DriveTime[]
+  networkNodes    NetworkNode[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model FacilityService {
+  id           String      @id @default(cuid())
+  facilityId   String
+  facility     Facility    @relation(fields: [facilityId], references: [id])
+  serviceLineId String
+  serviceLine  ServiceLine @relation(fields: [serviceLineId], references: [id])
+  status       String      @default("active")  // active, inactive, proposed
+  volume       Int?        // annual encounter volume
+  revenue      Float?      // annual revenue
+  cost         Float?      // annual cost
+  createdAt    DateTime    @default(now())
+
+  @@unique([facilityId, serviceLineId])
+}
+
+model FacilityFinancial {
+  id                      String   @id @default(cuid())
+  facilityId              String
+  facility                Facility @relation(fields: [facilityId], references: [id])
+  year                    Int
+  // Income statement
+  total_revenue           Float?
+  net_patient_revenue     Float?
+  total_expenses          Float?
+  operating_income        Float?
+  operating_margin_pct    Float?
+  // Margins
+  total_margin_pct        Float?
+  medicare_margin_pct     Float?
+  // Balance sheet indicators
+  days_cash_on_hand       Float?
+  current_ratio           Float?
+  long_term_debt_pct      Float?
+  // Staffing
+  fte_total               Float?
+  // Source
+  source                  String?  // HCRIS, state_report, etc.
+  createdAt               DateTime @default(now())
+
+  @@unique([facilityId, year])
+}
+
+model PayerMix {
+  id           String    @id @default(cuid())
+  facilityId   String
+  facility     Facility  @relation(fields: [facilityId], references: [id])
+  payerTypeId  String
+  payerType    PayerType @relation(fields: [payerTypeId], references: [id])
+  year         Int
+  pct          Float     // percentage 0-100
+  revenue      Float?    // actual revenue from this payer
+  createdAt    DateTime  @default(now())
+
+  @@unique([facilityId, payerTypeId, year])
+}
+
+model PricingRecord {
+  id            String      @id @default(cuid())
+  facilityId    String
+  facility      Facility    @relation(fields: [facilityId], references: [id])
+  serviceLineId String?
+  serviceLine   ServiceLine? @relation(fields: [serviceLineId], references: [id])
+  cpt_code      String
+  procedure     String
+  category      String
+  gross_charge  Float?
+  cash_price    Float?
+  neg_min       Float?
+  neg_max       Float?
+  medicare_rate Float?
+  rate_flag     String?     // vulnerable, moderate, strong, check_gross
+  n_records     Int?
+  year          Int?
+  createdAt     DateTime    @default(now())
+}
+
+model CostCenter {
+  id            String      @id @default(cuid())
+  facilityId    String
+  facility      Facility    @relation(fields: [facilityId], references: [id])
+  serviceLineId String?
+  serviceLine   ServiceLine? @relation(fields: [serviceLineId], references: [id])
+  year          Int
+  cost_center   String      // HCRIS cost center code
+  name          String
+  total_charges Float?
+  total_costs   Float?
+  net_revenue   Float?
+  rcc           Float?      // ratio of costs to charges
+  source        String?
+  createdAt     DateTime    @default(now())
+}
+
+model PatientFlow {
+  id              String   @id @default(cuid())
+  originId        String
+  origin          Facility @relation("FlowOrigin",      fields: [originId],      references: [id])
+  destinationId   String
+  destination     Facility @relation("FlowDestination", fields: [destinationId], references: [id])
+  year            Int
+  volume          Int      // number of patients
+  pct_of_origin   Float?   // % of origin facility's outflow
+  service_type    String?  // inpatient, outpatient, ED, etc.
+  source          String?  // HSA, claims, etc.
+  createdAt       DateTime @default(now())
+
+  @@unique([originId, destinationId, year, service_type])
+}
+
+model DriveTime {
+  id         String   @id @default(cuid())
+  countyId   String
+  county     County   @relation(fields: [countyId], references: [id])
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  minutes    Float
+  miles      Float?
+  source     String?
+  createdAt  DateTime @default(now())
+
+  @@unique([countyId, facilityId])
+}
+
+model HealthOutcome {
+  id         String   @id @default(cuid())
+  countyId   String
+  county     County   @relation(fields: [countyId], references: [id])
+  measure    String   // e.g. "diabetes_prevalence"
+  value      Float
+  year       Int
+  source     String?  // CMS PLACES, CDC, etc.
+  createdAt  DateTime @default(now())
+
+  @@unique([countyId, measure, year])
+}
+
+model CountyDemographic {
+  id         String   @id @default(cuid())
+  countyId   String
+  county     County   @relation(fields: [countyId], references: [id])
+  year       Int
+  // Population
+  total_pop          Int?
+  pop_under18        Float?
+  pop_65plus         Float?
+  pop_rural_pct      Float?
+  // Income
+  median_income      Float?
+  poverty_pct        Float?
+  // Insurance
+  uninsured_pct      Float?
+  // Source
+  source     String?  // ACS, Census
+  createdAt  DateTime @default(now())
+
+  @@unique([countyId, year])
+}
+
+// ══════════════════════════════════════════════════════════════
+// LAYER 3 — SCENARIO ENGINE
+// ══════════════════════════════════════════════════════════════
+
+model Scenario {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  status      String            @default("draft")  // draft, running, complete
+  baseYear    Int               @default(2024)
+  createdBy   String?
+  // Assumptions and results
+  assumptions ScenarioAssumption[]
+  results     ScenarioResult[]
+  networkStates NetworkState[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model ScenarioAssumption {
+  id          String   @id @default(cuid())
+  scenarioId  String
+  scenario    Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  type        String   // facility_closure, service_change, payer_mix_shift, funding, etc.
+  facilityId  String?
+  serviceLineId String?
+  parameter   String   // what's being changed
+  value       Json     // flexible JSON for complex assumptions
+  createdAt   DateTime @default(now())
+}
+
+model ScenarioResult {
+  id          String   @id @default(cuid())
+  scenarioId  String
+  scenario    Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  facilityId  String?
+  metric      String   // operating_margin, patient_volume, access_score, etc.
+  baseline    Float?
+  projected   Float?
+  delta       Float?
+  delta_pct   Float?
+  notes       String?
+  createdAt   DateTime @default(now())
+}
+
+model NetworkState {
+  id         String   @id @default(cuid())
+  scenarioId String
+  scenario   Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  nodes      NetworkNode[]
+  edges      NetworkEdge[]
+  createdAt  DateTime @default(now())
+}
+
+model NetworkNode {
+  id             String       @id @default(cuid())
+  networkStateId String
+  networkState   NetworkState @relation(fields: [networkStateId], references: [id], onDelete: Cascade)
+  facilityId     String
+  facility       Facility     @relation(fields: [facilityId], references: [id])
+  status         String       @default("active")  // active, closed, modified
+  services       Json         // array of service line IDs with on/off state
+  metrics        Json         // financial/access metrics for this node
+  edgesFrom      NetworkEdge[] @relation("EdgeOrigin")
+  edgesTo        NetworkEdge[] @relation("EdgeDestination")
+  createdAt      DateTime     @default(now())
+}
+
+model NetworkEdge {
+  id             String       @id @default(cuid())
+  networkStateId String
+  networkState   NetworkState @relation(fields: [networkStateId], references: [id], onDelete: Cascade)
+  originId       String
+  origin         NetworkNode  @relation("EdgeOrigin",      fields: [originId],      references: [id])
+  destinationId  String
+  destination    NetworkNode  @relation("EdgeDestination", fields: [destinationId], references: [id])
+  volume         Float        // patient flow volume
+  pct            Float        // percentage of total flow
+  type           String?      // inpatient, outpatient, ED
+  createdAt      DateTime     @default(now())
+}
+
+// ══════════════════════════════════════════════════════════════
+// LAYER 4 — OPTIMIZATION OUTPUTS
+// ══════════════════════════════════════════════════════════════
+
+model Recommendation {
+  id             String   @id @default(cuid())
+  scenarioId     String?
+  facilityId     String?
+  countyId       String?
+  type           String   // service_change, closure, telehealth, funding, workforce
+  priority       String   // high, medium, low
+  stakeholder    String   // state, facility, county, payer, all
+  title          String
+  description    String
+  financial_impact Float?
+  access_impact    Float?
+  health_impact    Float?
+  feasibility    String?  // easy, moderate, complex
+  timeframe      String?  // immediate, 1yr, 3yr, 5yr
+  policy_levers  Json?    // RHTP funding, reimbursement, workforce incentives
+  createdAt      DateTime @default(now())
+}
+
+model ParetoFrontier {
+  id         String   @id @default(cuid())
+  scenarioId String
+  label      String   // e.g. "Max Financial" / "Max Access" / "Balanced"
+  weights    Json     // { financial: 0.6, access: 0.3, health: 0.1 }
+  points     Json     // array of { scenarioVariant, metrics }
+  createdAt  DateTime @default(now())
+}
