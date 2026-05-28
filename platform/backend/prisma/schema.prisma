@@ -1,0 +1,337 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model State {
+  id           String     @id @default(cuid())
+  fips         String     @unique
+  name         String
+  abbreviation String     @unique
+  createdAt    DateTime   @default(now())
+  counties     County[]
+  facilities   Facility[]
+}
+
+model County {
+  id           String              @id @default(cuid())
+  fips         String              @unique
+  name         String
+  stateId      String
+  population   Int?
+  areasqmi     Float?
+  createdAt    DateTime            @default(now())
+  state        State               @relation(fields: [stateId], references: [id])
+  demographics CountyDemographic[]
+  driveTimes   DriveTime[]
+  facilities   Facility[]
+  outcomes     HealthOutcome[]
+}
+
+model ServiceLine {
+  id               String            @id @default(cuid())
+  code             String            @unique
+  name             String
+  category         String
+  canTelehealth    Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  costCenters      CostCenter[]
+  facilityServices FacilityService[]
+  pricingRecords   PricingRecord[]
+}
+
+model PayerType {
+  id         String     @id @default(cuid())
+  code       String     @unique
+  name       String
+  createdAt  DateTime   @default(now())
+  mixRecords PayerMix[]
+}
+
+model Facility {
+  id             String              @id @default(cuid())
+  cms_id         String?             @unique
+  name           String
+  type           String
+  is_cah         Boolean             @default(false)
+  is_rhtp        Boolean             @default(false)
+  countyId       String
+  stateId        String
+  latitude       Float?
+  longitude      Float?
+  address        String?
+  beds           Int?
+  telehealth     Boolean             @default(false)
+  status         String              @default("active")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  costCenters    CostCenter[]
+  driveTimesFrom DriveTime[]
+  county         County              @relation(fields: [countyId], references: [id])
+  state          State               @relation(fields: [stateId], references: [id])
+  financials     FacilityFinancial[]
+  services       FacilityService[]
+  networkNodes   NetworkNode[]
+  flowsTo        PatientFlow[]       @relation("FlowDestination")
+  flowsFrom      PatientFlow[]       @relation("FlowOrigin")
+  payerMix       PayerMix[]
+  pricingRecords PricingRecord[]
+}
+
+model FacilityService {
+  id            String      @id @default(cuid())
+  facilityId    String
+  serviceLineId String
+  status        String      @default("active")
+  volume        Int?
+  revenue       Float?
+  cost          Float?
+  createdAt     DateTime    @default(now())
+  facility      Facility    @relation(fields: [facilityId], references: [id])
+  serviceLine   ServiceLine @relation(fields: [serviceLineId], references: [id])
+
+  @@unique([facilityId, serviceLineId])
+}
+
+model FacilityFinancial {
+  id                   String   @id @default(cuid())
+  facilityId           String
+  year                 Int
+  total_revenue        Float?
+  net_patient_revenue  Float?
+  total_expenses       Float?
+  operating_income     Float?
+  operating_margin_pct Float?
+  total_margin_pct     Float?
+  medicare_margin_pct  Float?
+  days_cash_on_hand    Float?
+  current_ratio        Float?
+  long_term_debt_pct   Float?
+  fte_total            Float?
+  source               String?
+  createdAt            DateTime @default(now())
+  facility             Facility @relation(fields: [facilityId], references: [id])
+
+  @@unique([facilityId, year])
+}
+
+model PayerMix {
+  id          String    @id @default(cuid())
+  facilityId  String
+  payerTypeId String
+  year        Int
+  pct         Float
+  revenue     Float?
+  createdAt   DateTime  @default(now())
+  facility    Facility  @relation(fields: [facilityId], references: [id])
+  payerType   PayerType @relation(fields: [payerTypeId], references: [id])
+
+  @@unique([facilityId, payerTypeId, year])
+}
+
+model PricingRecord {
+  id            String       @id @default(cuid())
+  facilityId    String
+  serviceLineId String?
+  cpt_code      String
+  procedure     String
+  category      String
+  gross_charge  Float?
+  cash_price    Float?
+  neg_min       Float?
+  neg_max       Float?
+  medicare_rate Float?
+  rate_flag     String?
+  n_records     Int?
+  year          Int?
+  createdAt     DateTime     @default(now())
+  facility      Facility     @relation(fields: [facilityId], references: [id])
+  serviceLine   ServiceLine? @relation(fields: [serviceLineId], references: [id])
+}
+
+model CostCenter {
+  id            String       @id @default(cuid())
+  facilityId    String
+  serviceLineId String?
+  year          Int
+  cost_center   String
+  name          String
+  total_charges Float?
+  total_costs   Float?
+  net_revenue   Float?
+  rcc           Float?
+  source        String?
+  createdAt     DateTime     @default(now())
+  facility      Facility     @relation(fields: [facilityId], references: [id])
+  serviceLine   ServiceLine? @relation(fields: [serviceLineId], references: [id])
+}
+
+model PatientFlow {
+  id            String   @id @default(cuid())
+  originId      String
+  destinationId String
+  year          Int
+  volume        Int
+  pct_of_origin Float?
+  service_type  String?
+  source        String?
+  createdAt     DateTime @default(now())
+  destination   Facility @relation("FlowDestination", fields: [destinationId], references: [id])
+  origin        Facility @relation("FlowOrigin", fields: [originId], references: [id])
+
+  @@unique([originId, destinationId, year, service_type])
+}
+
+model DriveTime {
+  id         String   @id @default(cuid())
+  countyId   String
+  facilityId String
+  minutes    Float
+  miles      Float?
+  source     String?
+  createdAt  DateTime @default(now())
+  county     County   @relation(fields: [countyId], references: [id])
+  facility   Facility @relation(fields: [facilityId], references: [id])
+
+  @@unique([countyId, facilityId])
+}
+
+model HealthOutcome {
+  id        String   @id @default(cuid())
+  countyId  String
+  measure   String
+  value     Float
+  year      Int
+  source    String?
+  createdAt DateTime @default(now())
+  county    County   @relation(fields: [countyId], references: [id])
+
+  @@unique([countyId, measure, year])
+}
+
+model CountyDemographic {
+  id            String   @id @default(cuid())
+  countyId      String
+  year          Int
+  total_pop     Int?
+  pop_under18   Float?
+  pop_65plus    Float?
+  pop_rural_pct Float?
+  median_income Float?
+  poverty_pct   Float?
+  uninsured_pct Float?
+  source        String?
+  createdAt     DateTime @default(now())
+  county        County   @relation(fields: [countyId], references: [id])
+
+  @@unique([countyId, year])
+}
+
+model Scenario {
+  id            String               @id @default(cuid())
+  name          String
+  description   String?
+  status        String               @default("draft")
+  baseYear      Int                  @default(2024)
+  createdBy     String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  networkStates NetworkState[]
+  assumptions   ScenarioAssumption[]
+  results       ScenarioResult[]
+}
+
+model ScenarioAssumption {
+  id            String   @id @default(cuid())
+  scenarioId    String
+  type          String
+  facilityId    String?
+  serviceLineId String?
+  parameter     String
+  value         Json
+  createdAt     DateTime @default(now())
+  scenario      Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+}
+
+model ScenarioResult {
+  id         String   @id @default(cuid())
+  scenarioId String
+  facilityId String?
+  metric     String
+  baseline   Float?
+  projected  Float?
+  delta      Float?
+  delta_pct  Float?
+  notes      String?
+  createdAt  DateTime @default(now())
+  scenario   Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+}
+
+model NetworkState {
+  id         String        @id @default(cuid())
+  scenarioId String
+  createdAt  DateTime      @default(now())
+  edges      NetworkEdge[]
+  nodes      NetworkNode[]
+  scenario   Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+}
+
+model NetworkNode {
+  id             String        @id @default(cuid())
+  networkStateId String
+  facilityId     String
+  status         String        @default("active")
+  services       Json
+  metrics        Json
+  createdAt      DateTime      @default(now())
+  edgesTo        NetworkEdge[] @relation("EdgeDestination")
+  edgesFrom      NetworkEdge[] @relation("EdgeOrigin")
+  facility       Facility      @relation(fields: [facilityId], references: [id])
+  networkState   NetworkState  @relation(fields: [networkStateId], references: [id], onDelete: Cascade)
+}
+
+model NetworkEdge {
+  id             String       @id @default(cuid())
+  networkStateId String
+  originId       String
+  destinationId  String
+  volume         Float
+  pct            Float
+  type           String?
+  createdAt      DateTime     @default(now())
+  destination    NetworkNode  @relation("EdgeDestination", fields: [destinationId], references: [id])
+  networkState   NetworkState @relation(fields: [networkStateId], references: [id], onDelete: Cascade)
+  origin         NetworkNode  @relation("EdgeOrigin", fields: [originId], references: [id])
+}
+
+model Recommendation {
+  id               String   @id @default(cuid())
+  scenarioId       String?
+  facilityId       String?
+  countyId         String?
+  type             String
+  priority         String
+  stakeholder      String
+  title            String
+  description      String
+  financial_impact Float?
+  access_impact    Float?
+  health_impact    Float?
+  feasibility      String?
+  timeframe        String?
+  policy_levers    Json?
+  createdAt        DateTime @default(now())
+}
+
+model ParetoFrontier {
+  id         String   @id @default(cuid())
+  scenarioId String
+  label      String
+  weights    Json
+  points     Json
+  createdAt  DateTime @default(now())
+}
